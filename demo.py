@@ -12,22 +12,35 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- 字体配置 ---
-def set_chinese_font():
-    fonts = ['SimHei', 'Microsoft YaHei', 'PingFang SC', 'Arial Unicode MS']
-    found = False
-    for font in fonts:
-        try:
-            if font in [f.name for f in fm.fontManager.ttflist]:
-                plt.rcParams['font.sans-serif'] = [font]
-                plt.rcParams['axes.unicode_minus'] = False
-                found = True
-                break
-        except:
-            continue
-    if not found:
-        plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+import os
 
+# --- 字体自动配置 (云端/本地通用版) ---
+def set_chinese_font():
+    # 1. 优先尝试云端字体 (WenQuanYi Zen Hei)
+    # 2. 然后尝试本地 Windows/Mac 常见字体
+    fonts_to_try = ['WenQuanYi Zen Hei', 'SimHei', 'Microsoft YaHei', 'PingFang SC', 'Arial Unicode MS']
+    
+    selected_font = None
+    
+    # 遍历列表，找到第一个系统里存在的字体
+    for font in fonts_to_try:
+        if font in [f.name for f in fm.fontManager.ttflist]:
+            selected_font = font
+            break
+            
+    # 如果找到了字体，就设置
+    if selected_font:
+        plt.rcParams['font.sans-serif'] = [selected_font]
+        plt.rcParams['axes.unicode_minus'] = False # 解决负号显示为方块的问题
+        print(f"✅ 成功加载中文字体: {selected_font}")
+    else:
+        # 如果所有中文都没找到（极端情况），回退到英文，避免报错
+        plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
+        print("⚠️ 未检测到中文字体，回退到默认字体 (中文可能显示乱码)")
+
+# 调用函数
 set_chinese_font()
 
 # ================= 2. 侧边栏：控制台 =================
@@ -275,3 +288,4 @@ with tab3:
         st.metric("📅 静态投资回收期", f"{metrics['payback']:.1f} 年", "靠节电回本", delta_color=color)
         
     st.info("注：虽然采用了较高成本的钢结构与光伏系统，但凭借全生命周期内的显著节能效益，项目具有良好的长期经济可行性。")
+
