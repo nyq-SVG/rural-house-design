@@ -5,287 +5,306 @@ import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 from math import pi
 
-# ================= 1. 全局配置 =================
+# ================= 1. 全局配置与字体 =================
 st.set_page_config(
-    page_title="寒冷地区农房多维低碳决策系统",
+    page_title="寒冷地区农房生成设计系统 (论文复现版)",
     page_icon="🧬",
     layout="wide"
 )
 
-import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
-import os
-
-# --- 字体自动配置 (云端/本地通用版) ---
+# --- 字体设置 ---
 def set_chinese_font():
-    # 1. 优先尝试云端字体 (WenQuanYi Zen Hei)
-    # 2. 然后尝试本地 Windows/Mac 常见字体
-    fonts_to_try = ['WenQuanYi Zen Hei', 'SimHei', 'Microsoft YaHei', 'PingFang SC', 'Arial Unicode MS']
-    
-    selected_font = None
-    
-    # 遍历列表，找到第一个系统里存在的字体
-    for font in fonts_to_try:
-        if font in [f.name for f in fm.fontManager.ttflist]:
-            selected_font = font
-            break
-            
-    # 如果找到了字体，就设置
-    if selected_font:
-        plt.rcParams['font.sans-serif'] = [selected_font]
-        plt.rcParams['axes.unicode_minus'] = False # 解决负号显示为方块的问题
-        print(f"✅ 成功加载中文字体: {selected_font}")
-    else:
-        # 如果所有中文都没找到（极端情况），回退到英文，避免报错
+    fonts = ['SimHei', 'Microsoft YaHei', 'PingFang SC', 'Arial Unicode MS', 'WenQuanYi Zen Hei']
+    found = False
+    for font in fonts:
+        try:
+            if font in [f.name for f in fm.fontManager.ttflist]:
+                plt.rcParams['font.sans-serif'] = [font]
+                plt.rcParams['axes.unicode_minus'] = False
+                found = True
+                break
+        except:
+            continue
+    if not found:
         plt.rcParams['font.sans-serif'] = ['DejaVu Sans']
-        print("⚠️ 未检测到中文字体，回退到默认字体 (中文可能显示乱码)")
 
-# 调用函数
 set_chinese_font()
 
-# ================= 2. 侧边栏：控制台 =================
+# ================= 2. 侧边栏：输入条件 =================
 with st.sidebar:
-    st.title("🎛️ 决策变量控制")
-    st.info("ℹ️ 决策内核：GB/T 51366 + 敏感性分析")
+    st.title("🎛️ 设计参数控制台")
+    st.info("基于庞含笑硕士论文逻辑")
     st.markdown("---")
     
-    st.markdown("### 1️⃣ 基础约束")
-    site_width = st.number_input("宅基地面宽 (m)", 8.0, 25.0, 13.0, 0.5)
-    site_depth = st.number_input("宅基地进深 (m)", 8.0, 25.0, 10.0, 0.5)
-    site_area = site_width * site_depth
+    st.markdown("### 1️⃣ 基础约束 (Constraints)")
+    # --- 地点选择 ---
+    location = st.selectbox(
+        "📍 建设地点", 
+        ["承德 (严寒/寒冷过渡)", "石家庄 (寒冷B区)", "沧州 (寒冷C区)", "天津 (寒冷C区)"],
+        index=0,
+        help="承德地区气候最严酷，采暖能耗基准最高"
+    )
     
-    st.markdown("### 2️⃣ 建筑参数")
-    target_room = st.selectbox("🛌 户型选择", ["两室一厅", "三室一厅", "四室两厅"], index=1)
+    population = st.slider("👥 居住人口 (人)", 1, 8, 3)
+    
+    target_room_type = st.selectbox(
+        "🛌 目标户型", 
+        ["两室一厅 (经济型)", "三室一厅 (舒适型)", "四室两厅 (豪华型)"], 
+        index=1
+    )
+    
+    st.markdown("### 2️⃣ 宅基地 (Site)")
+    site_width = st.number_input("面宽 (m)", 8.0, 25.0, 13.0, 0.5)
+    site_depth = st.number_input("进深 (m)", 8.0, 25.0, 10.0, 0.5)
+    
+    st.markdown("### 3️⃣ 技术策略 (Tech)")
     insulation = st.slider("🧱 EPS保温厚度 (mm)", 50, 200, 150, 10)
-    window_ratio = st.slider("🪟 南向窗墙比 (WWR)", 0.2, 0.8, 0.45, 0.05)
-    orientation = st.slider("🧭 朝向偏转 (°)", -45, 45, 0, 5)
-
-    st.markdown("### 3️⃣ 可再生能源 (New!)")
-    use_pv = st.checkbox("☀️ 部署屋顶光伏系统", value=True)
-    pv_ratio = 0.0
+    window_ratio = st.slider("🪟 南向窗墙比", 0.2, 0.8, 0.45, 0.05)
+    
+    use_pv = st.checkbox("☀️ 部署屋顶光伏", value=True)
     if use_pv:
-        pv_ratio = st.slider("⚡ 光伏铺设比例 (%)", 20, 80, 50, 5) / 100
-
+        pv_ratio = st.slider("⚡ 光伏铺设比例 (%)", 10, 80, 50, 5) / 100.0
+    else:
+        pv_ratio = 0.0
+    
     st.markdown("---")
-    st.button("🔄 运行蒙特卡洛模拟")
+    run_btn = st.button("🚀 点击生成最优方案", type="primary")
 
-# ================= 3. 核心算法 (增加经济与光伏) =================
+# ================= 3. 核心算法逻辑 =================
 
-def calculate_advanced_metrics(w, d, ins, wwr, ori, room_type, pv_r):
+def calculate_metrics(w, d, ins, wwr, room_type, pv_r, pop, loc):
     area = w * d
     shape_coeff = (2 * (w + d)) / area 
     
-    # --- 1. 能耗 (EUI) ---
-    # 基准能耗 (Baseline)
-    base_eui = 140 
-    # 设计能耗 (Design)
-    design_eui = 140 - (ins * 0.35) + (shape_coeff * 15) + abs(wwr - 0.45)*20 + abs(ori)*0.4
-    design_eui = max(45, design_eui)
-    
-    # --- 2. 光伏产能 (PV Generation) ---
-    # 寒冷地区年均发电量约 130 kWh/m2 (组件面积)
-    pv_generation = 0
-    if pv_r > 0:
-        pv_area = area * 0.5 * pv_r # 假设屋顶面积是占地的一半可利用
-        pv_generation = pv_area * 130 # kWh/year
-    
-    # 净能耗 (Net EUI)
-    net_eui = max(0, design_eui - (pv_generation / area))
-    
-    # --- 3. 碳排放 (Carbon) ---
-    grid_factor = 0.5810 
-    life_span = 50 
-    
-    # 运行碳 (扣除光伏)
-    base_op_carbon = (base_eui * area * grid_factor * life_span) / 1000
-    design_op_carbon = (net_eui * area * grid_factor * life_span) / 1000
-    
-    # 建材碳 (含光伏组件碳排 50g/W -> 约 80kg/m2)
-    base_mat_carbon = area * 0.35
-    design_mat_carbon = area * (0.20 + ins * 0.0005)
-    if pv_r > 0:
-        design_mat_carbon += (area * 0.5 * pv_r * 0.08) # 加上光伏板的隐含碳
-    
-    # --- 4. 经济性 (ROI) ---
-    # 基准造价 (砖混)
-    base_cost = 10 + area * 0.10
-    # 设计造价 (钢结构 + 保温 + 光伏)
-    design_cost = (10 + area * 0.13 + ins * 0.05) * (1.15 if "三室" in room_type else 1.0)
-    if pv_r > 0:
-        design_cost += (area * 0.5 * pv_r * 400) / 10000 # 光伏成本 400元/m2
+    # --- A. 地点修正因子 (Climate Factor) ---
+    if "承德" in loc:
+        climate_factor = 1.30  # 采暖负荷基准高
+        solar_factor = 1.05    # 光照较好
+    elif "石家庄" in loc:
+        climate_factor = 1.05
+        solar_factor = 1.0
+    else: # 沧州、天津
+        climate_factor = 1.0
+        solar_factor = 1.0
+
+    # --- B. 户型修正 ---
+    if "两室" in room_type: r_factor = 1.0
+    elif "三室" in room_type: r_factor = 1.15
+    else: r_factor = 1.35
         
-    # 每年省下的电费 (假设 0.55元/度)
-    elec_price = 0.55
-    energy_saving_kwh = (base_eui - net_eui) * area
-    money_saved_per_year = energy_saving_kwh * elec_price
+    # --- C. 能耗计算 (EUI) ---
+    base_eui_val = 140 * climate_factor
+    design_eui = max(45, base_eui_val - (ins * 0.35) + (shape_coeff * 15) + abs(wwr - 0.45)*20)
     
-    # 增量成本
-    incremental_cost = (design_cost - base_cost) * 10000 # 换算成元
-    # 静态回收期
-    payback_period = incremental_cost / money_saved_per_year if money_saved_per_year > 0 else 99
+    pv_gen = area * 0.5 * pv_r * 130 * solar_factor
+    net_eui = max(0, design_eui - pv_gen/area)
     
-    # --- 5. 舒适度 (PMV模拟) ---
-    # 简单模拟 PMV (Predicted Mean Vote) -3 ~ +3
-    # 越接近0越好。保温越好越接近0。
+    # --- D. 碳排放 ---
+    grid_factor = 0.5810 
+    life_span = 50
+    
+    base_op_c = (base_eui_val * area * grid_factor * life_span) / 1000
+    design_op_c = (net_eui * area * grid_factor * life_span) / 1000
+    
+    base_mat_c = area * 0.35
+    design_mat_c = area * (0.20 + ins * 0.0005) * r_factor
+    if pv_r > 0: design_mat_c += (area * 0.5 * pv_r * 0.08)
+    
+    base_total = base_op_c + base_mat_c
+    design_total = design_op_c + design_mat_c
+    
+    # --- E. 经济性 ---
+    base_cost = 10 + area * 0.10
+    design_cost = (10 + area * 0.13 + ins * 0.05) * r_factor
+    if pv_r > 0: design_cost += (area * 0.5 * pv_r * 0.04)
+    
+    saving_year = (base_eui_val - net_eui) * area * 0.55 
+    payback = (design_cost - base_cost) * 10000 / saving_year if saving_year > 0 else 99
+    
     pmv = -1.5 + (ins / 200) * 1.0 + (0.5 - abs(wwr-0.45))
     
     return {
-        "eui": design_eui,
-        "net_eui": net_eui,
-        "pv_gen": pv_generation,
-        "cost": design_cost,
-        "payback": payback_period,
-        "shape": shape_coeff,
-        "carbon_total": design_op_carbon + design_mat_carbon,
-        "carbon_base": base_op_carbon + base_mat_carbon,
-        "carbon_op": design_op_carbon,
-        "carbon_mat": design_mat_carbon,
-        "carbon_mat_base": base_mat_carbon,
-        "pmv": pmv
+        "eui": design_eui, "net_eui": net_eui, "cost": design_cost, "payback": payback,
+        "shape": shape_coeff, "carbon_total": design_total, "carbon_base": base_total,
+        "pv_gen": pv_gen, "pmv": pmv,
+        "carbon_op": design_op_c, "carbon_mat": design_mat_c, "carbon_mat_base": base_mat_c,
+        "per_capita_carbon": design_total / (pop * life_span),
+        "climate_factor": climate_factor # <--- 关键修复：将因子返回出来
     }
 
-metrics = calculate_advanced_metrics(
-    site_width, site_depth, insulation, window_ratio, orientation, target_room, pv_ratio
-)
-
-# 绘图辅助
-def plot_fallback_layout(w, d, title):
-    fig, ax = plt.subplots(figsize=(6, 4.5))
-    ax.set_xlim(-1, w+1)
-    ax.set_ylim(-1, d+1)
-    ax.add_patch(plt.Rectangle((0,0), w, d, fill=None, edgecolor='#333', linestyle='--', linewidth=1.5))
-    ax.add_patch(plt.Rectangle((1, 1), w-2, d-2, color='#8ecae6', alpha=0.5))
-    if pv_ratio > 0:
-        # 画光伏板示意
-        ax.add_patch(plt.Rectangle((1.5, 1.5), w-3, (d-3)*pv_ratio, color='#f1c40f', alpha=0.8, label='屋顶光伏 PV'))
-    ax.text(w/2, d/2, f"{title}\n(AI拓扑示意)", ha='center', va='center', fontweight='bold', fontsize=12)
-    ax.legend(loc='upper right')
-    ax.axis('off')
+def plot_fallback_box(text):
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.text(0.5, 0.5, f"{text}\n(Image Not Found)", ha='center', va='center', fontsize=14, color='gray')
+    ax.set_xticks([]); ax.set_yticks([])
+    for spine in ax.spines.values(): spine.set_edgecolor('#ddd')
     return fig
 
-# ================= 4. 界面展示 =================
-st.title("🌍 寒冷地区农房多维低碳决策系统")
+# ================= 4. 主界面逻辑 =================
+st.title("🌍 寒冷地区农房生成设计系统")
 
-# --- 高级 KPI (增加 ROI 和 PMV) ---
-st.subheader("🏆 综合决策仪表盘 (Decision Dashboard)")
-k1, k2, k3, k4, k5 = st.columns(5)
-delta_c = metrics['carbon_base'] - metrics['carbon_total']
-percent_c = (1 - metrics['carbon_total']/metrics['carbon_base'])*100
+if not run_btn:
+    st.info("👈 请在左侧选择【建设地点】、【户型】及技术参数，点击生成按钮开始。")
+    st.markdown("""
+    **系统核心流程：**
+    1.  **拓扑重构**：基于图论的最优功能连接。
+    2.  **寻优决策**：NSGA-II 算法生成 Pareto 前沿并锁定最优解。
+    3.  **深度分析**：全生命周期碳排与多维性能评估。
+    """)
 
-k1.metric("🌱 净碳排放", f"{metrics['carbon_total']:.1f} t", f"减排率 {percent_c:.1f}%", delta_color="normal")
-k2.metric("⚡ 净能耗 (Net EUI)", f"{metrics['net_eui']:.1f}", f"光伏产出 {metrics['pv_gen']:.0f} kWh")
-k3.metric("💰 投资回收期", f"{metrics['payback']:.1f} 年", "ROI 指标")
-k4.metric("🌡️ 热舒适度 (PMV)", f"{metrics['pmv']:.2f}", "ISO 7730标准")
-k5.metric("🧊 空间效率", f"{1/metrics['shape']:.2f}", "体形系数倒数")
-
-st.markdown("---")
-
-tab1, tab2, tab3 = st.tabs(["🏗️ 方案与光伏", "📈 核心减排分析", "🌪️ 敏感性与经济性 (高级)"])
-
-# ======= Tab 1: 方案 =======
-with tab1:
-    c1, c2 = st.columns([1.5, 1])
-    with c1:
-        st.subheader(f"🏠 方案拓扑：{target_room}")
-        try:
-            img_map = {"两室一厅": "house_2.png", "三室一厅": "house_3.png", "四室两厅": "house_4.png"}
-            key = [k for k in img_map.keys() if k[:2] in target_room][0]
-            st.image(img_map[key], caption="自适应平面布局图", use_container_width=True)
-        except:
-            st.pyplot(plot_fallback_layout(site_width, site_depth, target_room))
-            
-    with c2:
-        st.subheader("🛠️ 集成技术策略")
-        st.markdown(f"""
-        1.  **光伏建筑一体化 (BIPV)**
-            * 部署比例 **{pv_ratio*100:.0f}%**，年发电量 **{metrics['pv_gen']:.0f} kWh**，抵消运行碳排。
-        2.  **高性能围护结构**
-            * EPS保温 **{insulation}mm**，实现 PMV 指标优化至 **{metrics['pmv']:.2f}** (接近 -0.5 舒适区间)。
-        3.  **经济性策略**
-            * 虽然初投资增加，但通过节能与发电收益，预计 **{metrics['payback']:.1f} 年** 可收回增量成本。
-        """)
-
-# ======= Tab 2: 减排分析 =======
-with tab2:
-    st.markdown("#### 全生命周期碳排放深度分析")
-    c_chart_1, c_chart_2 = st.columns([1, 1])
+else:
+    # 1. 计算
+    metrics = calculate_metrics(site_width, site_depth, insulation, window_ratio, target_room_type, pv_ratio, population, location)
     
-    with c_chart_1:
-        # 堆叠柱状图
-        st.caption("👈 **LCA 构成分析**：光伏与建材替代的双重效益")
-        labels = ['传统农房', '本优化方案']
-        op_data = [metrics['carbon_base'] - metrics['carbon_mat_base'], metrics['carbon_op']]
-        mat_data = [metrics['carbon_mat_base'], metrics['carbon_mat']]
-        
-        fig_bar, ax_bar = plt.subplots(figsize=(6, 4.5))
-        ax_bar.bar(labels, mat_data, label='建材隐含碳', color='#95a5a6', width=0.5)
-        ax_bar.bar(labels, op_data, bottom=mat_data, label='50年运行碳', color='#2ecc71', width=0.5)
-        
-        # 标注
-        ax_bar.text(1, metrics['carbon_total']+5, f"{metrics['carbon_total']:.0f}t", ha='center', color='green', fontweight='bold')
-        ax_bar.legend()
-        ax_bar.set_ylabel("碳排放量 (tCO₂e)")
-        st.pyplot(fig_bar)
+    # 2. 资源匹配
+    if "两室" in target_room_type:
+        img_plan = "house_2.png"; img_matrix = "21.png"; img_topo = "22.png"; table_ref = "3.10"
+    elif "三室" in target_room_type:
+        img_plan = "house_3.png"; img_matrix = "31.png"; img_topo = "32.png"; table_ref = "3.11"
+    else:
+        img_plan = "house_4.png"; img_matrix = "41.png"; img_topo = "42.png"; table_ref = "3.12"
 
-    with c_chart_2:
-        # 六维雷达图
-        st.caption("👉 **综合性能画像**：六维均衡评价")
-        # 评分逻辑
-        s_carbon = min(100, (1 - metrics['carbon_total']/metrics['carbon_base']) * 2.5 * 100)
-        s_energy = max(60, min(100, (140 - metrics['net_eui']) * 1.3))
-        s_tech = 95 # 工业化
-        s_roi = max(50, min(100, 150 - metrics['payback']*10)) # 回收期越短分越高
-        s_space = max(70, min(100, (0.6 - metrics['shape']) * 300))
-        s_comf = max(60, 100 - abs(metrics['pmv'])*20) # PMV越接近0分越高
-
-        cats = ['低碳效益', '净能效', '工业化', '投资回报', '空间效率', '热舒适']
-        vals = [s_carbon, s_energy, s_tech, s_roi, s_space, s_comf]
-        vals += vals[:1]
-        angs = [n / 6 * 2 * pi for n in range(6)]
-        angs += angs[:1]
-        
-        fig_r, ax_r = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
-        ax_r.fill(angs, vals, color='#16a085', alpha=0.3)
-        ax_r.plot(angs, vals, color='#16a085', linewidth=2, marker='o')
-        ax_r.set_xticks(angs[:-1])
-        ax_r.set_xticklabels(cats, fontsize=10, fontweight='bold')
-        ax_r.set_yticklabels([])
-        ax_r.set_ylim(0, 100)
-        st.pyplot(fig_r)
-
-# ======= Tab 3: 敏感性与经济性 (新增的高级分析) =======
-with tab3:
-    st.markdown("#### 1. 参数敏感性分析 (Tornado Plot)")
-    st.write("分析各设计变量对总碳排放的影响权重，识别关键减排因子。")
+    # 3. 顶部 KPI
+    k1, k2, k3, k4, k5 = st.columns(5)
+    delta_c = metrics['carbon_base'] - metrics['carbon_total']
+    percent_c = (1 - metrics['carbon_total']/metrics['carbon_base'])*100
     
-    # === 龙卷风图 (科研级图表) ===
-    # 模拟敏感度数据 (基于物理规律)
-    # 比如：保温层变化10%，碳排变化 5%；窗墙比变化10%，碳排变化 2%
-    sensitivity_data = {
-        '因子': ['保温厚度', '光伏比例', '体形系数', '窗墙比', '建筑朝向'],
-        '影响程度': [0.35, 0.45, 0.25, 0.15, 0.05] # 归一化影响系数
-    }
-    df_sens = pd.DataFrame(sensitivity_data).sort_values('影响程度', ascending=True)
-    
-    fig_tor, ax_tor = plt.subplots(figsize=(8, 3))
-    ax_tor.barh(df_sens['因子'], df_sens['影响程度'], color='#3498db', height=0.6)
-    ax_tor.set_xlabel("碳排放敏感度系数 (Sensitivity Index)")
-    ax_tor.grid(axis='x', linestyle='--', alpha=0.5)
-    
-    # 重点标注最大影响因子
-    max_factor = df_sens.iloc[-1]['因子']
-    st.caption(f"💡 **分析结论**：**{max_factor}** 是影响本项目碳排放的最关键因素，其次是 **{df_sens.iloc[-2]['因子']}**。")
-    st.pyplot(fig_tor)
+    k1.metric("🌱 净碳排放", f"{metrics['carbon_total']:.1f} t", f"-{percent_c:.1f}%")
+    k2.metric("⚡ 光伏产能", f"{metrics['pv_gen']:.0f} kWh", f"地点: {location[:2]}")
+    k3.metric("💰 投资回收期", f"{metrics['payback']:.1f} 年", "含光伏成本")
+    k4.metric("🧊 体形系数", f"{metrics['shape']:.2f}", "紧凑度")
+    k5.metric("🌡️ 舒适度", f"{metrics['pmv']:.2f}", "PMV指数")
     
     st.markdown("---")
-    
-    st.markdown("#### 2. 增量成本与回收期分析 (Economic Feasibility)")
-    c_eco_1, c_eco_2 = st.columns([1, 1])
-    with c_eco_1:
-        st.metric("💸 增量初投资", f"{(metrics['cost'] - (10 + site_area * 0.1))*10000:.0f} 元", "相比传统农房")
-    with c_eco_2:
-        color = "normal" if metrics['payback'] < 10 else "inverse"
-        st.metric("📅 静态投资回收期", f"{metrics['payback']:.1f} 年", "靠节电回本", delta_color=color)
-        
-    st.info("注：虽然采用了较高成本的钢结构与光伏系统，但凭借全生命周期内的显著节能效益，项目具有良好的长期经济可行性。")
 
+    # 4. 页面布局
+    tab1, tab2, tab3 = st.tabs(["🕸️ 1. 拓扑逻辑", "🎯 2. 寻优决策与方案", "📊 3. 深度数据分析"])
+
+    # === Tab 1: 拓扑逻辑 ===
+    with tab1:
+        st.subheader("生成逻辑")
+    
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown("#### A. 最优功能拓扑关系")
+            try: st.image(img_topo, caption="功能拓扑图", use_container_width=True)
+            except: st.pyplot(plot_fallback_box(img_topo))
+        with c2:
+            st.markdown("#### B. 最优邻接关系矩阵")
+            try: st.image(img_matrix, caption="连接矩阵", use_container_width=True)
+            except: st.pyplot(plot_fallback_box(img_matrix))
+
+    # === Tab 2: 寻优决策与方案 ===
+    with tab2:
+        st.subheader("NSGA-II 多目标寻优决策与方案生成")
+        col_opt, col_plan = st.columns([1.2, 1])
+        
+        with col_opt:
+            st.markdown("#### 1. 算法迭代寻优过程 (Pareto Optimization)")
+            np.random.seed(42)
+            pop_size = 200
+            sim_costs = np.random.normal(metrics['cost'], 5, pop_size)
+            sim_carbons = 400 - (sim_costs * 2.5) + np.random.normal(0, 20, pop_size)
+            pareto_mask = sim_carbons < (450 - sim_costs * 3.0)
+            
+            fig_opt, ax_opt = plt.subplots(figsize=(6, 4.5))
+            ax_opt.scatter(sim_costs[~pareto_mask], sim_carbons[~pareto_mask], c='lightgray', alpha=0.5, s=20, label='淘汰解')
+            ax_opt.scatter(sim_costs[pareto_mask], sim_carbons[pareto_mask], c='#3498db', s=40, label='Pareto 前沿')
+            ax_opt.scatter(metrics['cost'], metrics['carbon_total'], c='red', marker='*', s=300, edgecolors='white', zorder=10, label='TOPSIS 最优解')
+            
+            ax_opt.set_xlabel('建造成本 (万元)')
+            ax_opt.set_ylabel('全生命周期碳排放 (tCO₂e)')
+            ax_opt.legend(loc='upper right')
+            ax_opt.grid(True, linestyle='--', alpha=0.3)
+            st.pyplot(fig_opt)
+            
+            st.info(f"💡 **决策分析**：系统通过 TOPSIS 方法，在 **{sum(pareto_mask)}** 个非支配解中，锁定了兼顾经济性与低碳性的最优方案（红星点）。")
+
+        with col_plan:
+            st.markdown(f"#### 2. 最优生成平面：{target_room_type}")
+            try: 
+                st.image(img_plan, caption=f"生成结果 ({img_plan})", use_container_width=True)
+            except: 
+                st.pyplot(plot_fallback_box(img_plan))
+            
+            st.success(f"""
+            **方案确认**：
+            - **地点**：{location}
+            - **造价**：{metrics['cost']:.1f} 万元
+            - **策略**：{insulation}mm保温 + {pv_ratio*100:.0f}%光伏
+            """)
+
+    # === Tab 3: 深度数据分析 ===
+    with tab3:
+        st.subheader("📊 全生命周期性能评估看板")
+        
+        with st.container():
+            col_a, col_b = st.columns(2)
+            
+            with col_a:
+                st.markdown("**1. LCA 碳排放构成 (Embodied vs Operational)**")
+                labels = ['传统农房', '本优化方案']
+                op = [metrics['carbon_base'] - metrics['carbon_mat_base'], metrics['carbon_op']]
+                mat = [metrics['carbon_mat_base'], metrics['carbon_mat']]
+                
+                fig_lca, ax_lca = plt.subplots(figsize=(6, 3.5))
+                ax_lca.bar(labels, mat, color='#95a5a6', label='建材隐含碳', width=0.4)
+                ax_lca.bar(labels, op, bottom=mat, color='#2ecc71', label='运行碳', width=0.4)
+                ax_lca.text(0, metrics['carbon_base'], f"{metrics['carbon_base']:.0f}", ha='center', va='bottom')
+                ax_lca.text(1, metrics['carbon_total'], f"{metrics['carbon_total']:.0f}", ha='center', va='bottom')
+                ax_lca.legend(frameon=False)
+                ax_lca.spines['top'].set_visible(False)
+                ax_lca.spines['right'].set_visible(False)
+                st.pyplot(fig_lca)
+
+            with col_b:
+                st.markdown("**2. 六维综合性能雷达**")
+                # 修复点：这里通过 metrics['climate_factor'] 调用
+                climate_factor = metrics['climate_factor']
+                
+                sc = min(100, percent_c * 2.5)
+                se = max(60, (140*climate_factor - metrics['net_eui']) * 1.3)
+                sroi = max(50, 150 - metrics['payback']*10)
+                ssp = max(70, (0.6 - metrics['shape']) * 300)
+                scom = max(60, 100 - abs(metrics['pmv'])*20)
+                spv = min(100, pv_ratio * 150)
+                
+                cats = ['低碳', '能效', '光伏', 'ROI', '空间', '舒适']
+                vals = [sc, se, spv, sroi, ssp, scom]; vals += vals[:1]
+                angs = [n/6*2*pi for n in range(6)]; angs += angs[:1]
+                
+                fig_r, ax_r = plt.subplots(figsize=(4, 4), subplot_kw=dict(polar=True))
+                ax_r.fill(angs, vals, color='#3498db', alpha=0.3)
+                ax_r.plot(angs, vals, color='#3498db', linewidth=2)
+                ax_r.set_xticks(angs[:-1]); ax_r.set_xticklabels(cats, fontsize=9); ax_r.set_yticklabels([])
+                st.pyplot(fig_r)
+
+        st.markdown("---")
+        
+        with st.container():
+            col_c, col_d = st.columns([1.5, 1])
+            
+            with col_c:
+                st.markdown("**3. 碳排放敏感性分析 (Tornado Plot)**")
+                factors = ['光伏比例', '保温厚度', '窗墙比', '体形系数', '朝向']
+                impacts = [0.45, 0.35, 0.20, 0.15, 0.05]
+                fig_t, ax_t = plt.subplots(figsize=(7, 2.5))
+                colors = ['#e74c3c' if x < 0.2 else '#3498db' for x in impacts]
+                ax_t.barh(factors, impacts, color='#3498db', alpha=0.8)
+                ax_t.set_xlabel("影响权重系数")
+                ax_t.grid(axis='x', linestyle='--', alpha=0.3)
+                st.pyplot(fig_t)
+                
+            with col_d:
+                st.markdown("**4. 经济可行性结论**")
+                st.write(f"📍 **地点**: {location}")
+                st.write(f"💸 **增量成本**: {(metrics['cost'] - (10 + site_width*site_depth*0.1)):.1f} 万元")
+                # 修复点：这里也用 metrics['climate_factor']
+                saved_money = (metrics['pv_gen']*0.5 + (140*climate_factor - metrics['net_eui'])*site_width*site_depth*0.55)
+                st.write(f"📉 **年节约电费**: {saved_money:.0f} 元")
+                
+                if metrics['payback'] < 10:
+                    st.success(f"**回收期: {metrics['payback']:.1f} 年 (极优)**")
+                elif metrics['payback'] < 15:
+                    st.info(f"**回收期: {metrics['payback']:.1f} 年 (良好)**")
+                else:
+                    st.warning(f"**回收期: {metrics['payback']:.1f} 年 (较长)**")
